@@ -210,67 +210,67 @@ def tomgf(sp, y):
 
     return head + '\n'.join(peaks) + '\nEND IONS'
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', type=str,
+                        help='input file path', default='example.tsv')
+    parser.add_argument('--batch_size', type=str,
+                        help='batch size per loop', default=256)
+    parser.add_argument('--output', type=str,
+                        help='output file path', default='example_prediction.mgf')
+    parser.add_argument('--model', type=str,
+                        help='model file path', default='pm.h5')
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--input', type=str,
-                    help='input file path', default='example.tsv')
-parser.add_argument('--batch_size', type=str,
-                    help='batch size per loop', default=256)
-parser.add_argument('--output', type=str,
-                    help='output file path', default='example_prediction.mgf')
-parser.add_argument('--model', type=str,
-                    help='model file path', default='pm.h5')
+    args = parser.parse_args()
 
-args = parser.parse_args()
+    K.clear_session()
 
-K.clear_session()
+    pm = k.models.load_model(args.model, compile=0)
+    pm.compile(optimizer=k.optimizers.Adam(lr=0.0003), loss='cosine')
 
-pm = k.models.load_model(args.model, compile=0)
-pm.compile(optimizer=k.optimizers.Adam(lr=0.0003), loss='cosine')
+    # fragmentation types
+    types = {'un': 0, 'cid': 1, 'etd': 2, 'hcd': 3, 'ethcd': 4, 'etcid': 5}
 
-# fragmentation types
-types = {'un': 0, 'cid': 1, 'etd': 2, 'hcd': 3, 'ethcd': 4, 'etcid': 5}
+    # read inputs
+    inputs = []
+    for item in pd.read_csv(args.input, sep='\t').itertuples():
+        if item.Charge < 1 or item.Charge > max_charge:
+            print("input", item.Peptide, 'exceed max charge of', max_charge, ", ignored")
+            continue
 
-# read inputs
-inputs = []
-for item in pd.read_csv(args.input, sep='\t').itertuples():
-    if item.Charge < 1 or item.Charge > max_charge:
-        print("input", item.Peptide, 'exceed max charge of', max_charge, ", ignored")
-        continue
+        pep, mod, nterm_mod = getmod(item.Peptide)
 
-    pep, mod, nterm_mod = getmod(item.Peptide)
+        if nterm_mod != 0:
+            print("input", item.Peptide, 'has N-term modification, ignored')
+            continue
 
-    if nterm_mod != 0:
-        print("input", item.Peptide, 'has N-term modification, ignored')
-        continue
+        if np.any(mod != 0) and set(mod) != set([0, 1]):
+            print("Only Oxidation modification is supported, ignored", item.Peptide)
+            continue
 
-    if np.any(mod != 0) and set(mod) != set([0, 1]):
-        print("Only Oxidation modification is supported, ignored", item.Peptide)
-        continue
+        inputs.append({'pep': pep, 'mod': mod, 'charge': item.Charge, 'title': item.Peptide,
+                    'nce': item.NCE, 'type': types[item.Type.lower()],
+                    'mass': fastmass(pep, 'M', item.Charge, mod=mod)})
+                    
+        xshape[0] = max(xshape[0], len(pep) + 2) # update xshape to match max input peptide
 
-    inputs.append({'pep': pep, 'mod': mod, 'charge': item.Charge, 'title': item.Peptide,
-                   'nce': item.NCE, 'type': types[item.Type.lower()],
-                   'mass': fastmass(pep, 'M', item.Charge, mod=mod)})
-                   
-    xshape[0] = max(xshape[0], len(pep) + 2) # update xshape to match max input peptide
+    batch_per_loop = 64
+    loop_size = args.batch_size * batch_per_loop
 
-batch_per_loop = 64
-loop_size = args.batch_size * batch_per_loop
+    f = open(args.output, 'w+')
 
-f = open(args.output, 'w+')
+    while len(inputs) > 0:
+        if len(inputs) >= loop_size:
+            sliced_spectra = inputs[:loop_size]
+            inputs = inputs[loop_size:]
+        else:
+            sliced_spectra = inputs
+            inputs = []
 
-while len(inputs) > 0:
-    if len(inputs) >= loop_size:
-        sliced_spectra = inputs[:loop_size]
-        inputs = inputs[loop_size:]
-    else:
-        sliced_spectra = inputs
-        inputs = []
+        y = pm.predict(input_generator(sliced_spectra, preprocessor, batch_size=args.batch_size), verbose=1)
+        y = np.square(y)
 
-    y = pm.predict(input_generator(sliced_spectra, preprocessor, batch_size=args.batch_size), verbose=1)
-    y = np.square(y)
+        f.writelines("%s\n\n" % tomgf(sp, yi) for sp, yi in zip(sliced_spectra, y))
 
-    f.writelines("%s\n\n" % tomgf(sp, yi) for sp, yi in zip(sliced_spectra, y))
-
-f.close()
-print("Prediction finished")
+    f.close()
+    print("Prediction finished")

@@ -149,6 +149,9 @@ def spectrum2vector(mz_list, itensity_list, mass, bin_size, charge):
     indexes = np.around(indexes).astype('int32')
 
     for i, index in enumerate(indexes):
+        if index > 20000:
+            print(index)
+            continue
         vector[index] += itensity_list[i]
 
     # normalize
@@ -227,27 +230,28 @@ def build(act='relu'):
     pmodel = k.models.Model(inputs=inp, outputs=x, name="predfull_model")
     return pmodel
 
-parser = argparse.ArgumentParser()
-parser.add_argument('--mgf', type=str,
-                    help='output file path', default='hcd_testingset.mgf')
-parser.add_argument('--out', type=str,
-                    help='filename to save the trained model', default='trained.h5')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--mgf', type=str,
+                        help='output file path', default='hcd_testingset.mgf')
+    parser.add_argument('--out', type=str,
+                        help='filename to save the trained model', default='trained.h5')
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-K.clear_session()
+    K.clear_session()
 
-pm = build()
-pm.compile(optimizer=k.optimizers.Adam(lr=0.0003), loss='cosine_similarity')
-print(pm.summary())
+    pm = build()
+    pm.compile(optimizer=k.optimizers.Adam(lr=0.0003), loss='cosine_similarity')
+    print(pm.summary())
 
 
-print('Reading mgf...', args.mgf)
-spectra = readmgf(args.mgf)
+    print('Reading mgf...', args.mgf)
+    spectra = readmgf(args.mgf)
 
-y = [spectrum2vector(sp['mz'], sp['it'], sp['mass'], BIN_SIZE, sp['charge']) for sp in spectra]
+    y = [spectrum2vector(sp['mz'], sp['it'], sp['mass'], BIN_SIZE, sp['charge']) for sp in spectra]
 
-x = [embed(sp) for sp in spectra]
+    x = [embed(sp) for sp in spectra]
 
-pm.fit(x=asnp32(x), y=asnp32(y), epochs=50, verbose=1)
-pm.save(args.out)
+    pm.fit(x=asnp32(x), y=asnp32(y), epochs=50, verbose=1)
+    pm.save(args.out)
